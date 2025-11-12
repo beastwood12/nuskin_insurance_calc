@@ -490,8 +490,3 @@ function HealthPlanComparison() {
 export default function App() {
   return <HealthPlanComparison />;
 }
-
-// Default export expected by main.tsx
-export default function App() {
-  return <HealthPlanComparison />;
-}
