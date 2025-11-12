@@ -2,13 +2,13 @@
 import React, { useMemo, useState, useDeferredValue } from "react";
 
 /**
- * Interactive Health Insurance Plan Calculator — Full UI with Pharmacy Legend
- * --------------------------------------------------------------------------
- * - Restores the full comparison + calculator UI.
- * - Renders pharmacy tiers with proper newlines via template literals and
- *   `whitespace-pre-line` styling.
- * - Places legend ("AD = After Deductible ...") directly under the Pharmacy row.
- * - Keeps coverage-correct thresholds and negative outflow costs.
+ * Interactive Health Insurance Plan Calculator — Monthly & HSA Cap Updates
+ * -----------------------------------------------------------------------
+ * - Standardizes premiums to **Monthly** in the comparison table.
+ * - Removes the Display Costs dropdown.
+ * - Caps "Annual HSA Contribution ($)" at (coverage max − Nu Skin match for that coverage).
+ *   • Employee Only cap = 4,400 − 600 = 3,800
+ *   • Any 2+ coverage cap = 8,750 − 1,200 = 7,550
  */
 
 // -----------------------------------------------
@@ -75,7 +75,6 @@ The deductible must be met first!`,
 } as const;
 
 type Coverage = keyof typeof planData.traditional.costs;
-type DisplayMode = "monthly" | "pay";
 
 type Plan = (typeof planData)[keyof typeof planData];
 const PLAN_ORDER: Plan[] = [planData.traditional, planData.hdhpA, planData.hdhpB];
@@ -92,9 +91,6 @@ const currency = (n: number) =>
 
 const coverageMaxHSA = (coverage: Coverage) =>
   coverage === "employee" ? 4400 : 8750;
-
-const premiumFor = (plan: Plan, coverage: Coverage, mode: DisplayMode) =>
-  mode === "monthly" ? plan.costs[coverage].monthly : plan.costs[coverage].pay;
 
 const employerMatchFor = (plan: Plan, coverage: Coverage) =>
   plan.hsaMatch[coverage] ?? 0;
@@ -139,30 +135,27 @@ const totalContributionIncludingMatch = (matchCap: number, employee: number) =>
 // -----------------------------------------------
 function HealthPlanComparison() {
   const [coverage, setCoverage] = useState<Coverage>("family");
-  const [displayMode, setDisplayMode] = useState<DisplayMode>("pay");
   const [expectedSpend, setExpectedSpend] = useState(0);
   const [employeeContribution, setEmployeeContribution] = useState(0);
 
   const dExpectedSpend = useDeferredValue(expectedSpend);
   const dEmployeeContribution = useDeferredValue(employeeContribution);
 
-  const displayLabel = displayMode === "monthly" ? "Monthly" : "Per Pay Period";
-  const hsaMaxByCoverage = useMemo(() => coverageMaxHSA(coverage), [coverage]);
-
+  // Max match Nu Skin provides for this coverage across HDHP plans (0 for Traditional)
   const maxMatchForCoverage = useMemo(
-    () =>
-      Math.max(
-        planData.hdhpA.hsaMatch[coverage] || 0,
-        planData.hdhpB.hsaMatch[coverage] || 0
-      ),
+    () => Math.max(planData.hdhpA.hsaMatch[coverage] || 0, planData.hdhpB.hsaMatch[coverage] || 0),
     [coverage]
   );
 
+  // New cap: HSA employee contribution cannot exceed (coverage max − employer match for that coverage)
+  const hsaEmployeeCap = useMemo(() => {
+    const cap = coverageMaxHSA(coverage) - maxMatchForCoverage;
+    return Math.max(0, cap);
+  }, [coverage, maxMatchForCoverage]);
+
+  const hsaMaxByCoverage = useMemo(() => coverageMaxHSA(coverage), [coverage]);
   const totalInclMatchDisplay = useMemo(
-    () =>
-      currency(
-        totalContributionIncludingMatch(maxMatchForCoverage, dEmployeeContribution)
-      ),
+    () => currency(totalContributionIncludingMatch(maxMatchForCoverage, dEmployeeContribution)),
     [maxMatchForCoverage, dEmployeeContribution]
   );
 
@@ -171,7 +164,7 @@ function HealthPlanComparison() {
     return PLAN_ORDER.map((plan) => {
       const { deductible, oopMax } = thresholdsFor(plan, coverage);
 
-      // Annual premium (negative outflow)
+      // Annual premium (negative outflow) — always Monthly * 12
       const annualEmployeePremiumCost = -(plan.costs[coverage].monthly * 12);
 
       // HSA benefit = min(employee contrib, employer match)
@@ -209,7 +202,7 @@ function HealthPlanComparison() {
 
   const onSetContribution = (val: number) => {
     const n = Number.isFinite(val) ? val : 0;
-    setEmployeeContribution(Math.max(0, Math.min(hsaMaxByCoverage, n)));
+    setEmployeeContribution(Math.max(0, Math.min(hsaEmployeeCap, n)));
   };
 
   return (
@@ -243,19 +236,6 @@ function HealthPlanComparison() {
                 <option value="family">Employee + Family</option>
               </select>
             </div>
-            <div>
-              <label className="text-sm text-gray-700 mb-1 block">
-                Display Costs As
-              </label>
-              <select
-                className="border-2 rounded-xl px-4 py-2 text-lg w-full"
-                value={displayMode}
-                onChange={(e) => setDisplayMode(e.target.value as DisplayMode)}
-              >
-                <option value="monthly">Monthly</option>
-                <option value="pay">Per Pay Period</option>
-              </select>
-            </div>
           </div>
 
           <div className="grid md:grid-cols-2 gap-6 mt-4">
@@ -286,10 +266,10 @@ function HealthPlanComparison() {
               <input
                 type="number"
                 min={0}
-                max={hsaMaxByCoverage}
+                max={hsaEmployeeCap}
                 step={50}
                 className="border-2 rounded-xl px-4 py-2 w-full"
-                placeholder={`Enter 0 – ${currency(hsaMaxByCoverage)}`}
+                placeholder={`Enter 0 – ${currency(hsaEmployeeCap)}`}
                 value={employeeContribution}
                 onChange={(e) => onSetContribution(Number(e.target.value))}
               />
@@ -298,8 +278,7 @@ function HealthPlanComparison() {
                 <span className="font-medium">{totalInclMatchDisplay}</span>
               </p>
               <p className="text-[11px] text-gray-500 mt-1">
-                (You can enter $0. Maximums by coverage — Employee Only:
-                $4,400; Employee + Spouse/Child(ren)/Family: $8,750)
+                Your max employee HSA contribution is limited to coverage max minus Nu Skin match. Current cap: {currency(hsaEmployeeCap)} (Coverage max {currency(hsaMaxByCoverage)} − Match {currency(maxMatchForCoverage)}).
               </p>
             </div>
           </div>
@@ -328,7 +307,7 @@ function HealthPlanComparison() {
               <tbody>
                 <tr>
                   <td className="sticky left-0 bg-white px-4 py-3 text-gray-700 font-medium border-b">
-                    Premium / {displayLabel}
+                    Premium / Monthly
                   </td>
                   {PLAN_ORDER.map((p) => (
                     <td
@@ -336,7 +315,7 @@ function HealthPlanComparison() {
                       className="px-4 py-4 border-b"
                     >
                       <div className="text-2xl font-semibold">
-                        {currency(premiumFor(p, coverage, displayMode))}
+                        {currency(p.costs[coverage].monthly)}
                       </div>
                     </td>
                   ))}
@@ -500,12 +479,16 @@ function HealthPlanComparison() {
         </section>
 
         <footer className="text-center text-xs text-gray-500 py-6">
-          Full UI with legend under Pharmacy Benefit. Coverage-correct
-          thresholds and negative outflow costs are preserved.
+          Premiums standardized to Monthly. HSA employee max now accounts for Nu Skin match per coverage.
         </footer>
       </div>
     </div>
   );
+}
+
+// Default export expected by main.tsx
+export default function App() {
+  return <HealthPlanComparison />;
 }
 
 // Default export expected by main.tsx
